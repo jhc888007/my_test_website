@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Trust Desk · 首页{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-2xl text-center">
+  <p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-amber-400/90">Fiduciary Console</p>
+  <h1 class="mt-4 text-3xl font-semibold tracking-tight text-white md:text-4xl">极简信托资金管理</h1>
+  <p class="mt-4 text-sm leading-relaxed text-slate-400">
+    发放者与受益人分角色工作台，数据落库 SQLite，界面为私行级深色财务风格。
+  </p>
+  <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
+    <a href="{{ url_for('register') }}" class="rounded-full bg-amber-500 px-6 py-2.5 text-sm font-semibold text-desk-bg shadow-lg shadow-amber-500/20 transition hover:bg-amber-400">开通账户</a>
+    <a href="{{ url_for('login') }}" class="rounded-full border border-white/15 bg-white/5 px-6 py-2.5 text-sm font-medium text-slate-200 transition hover:border-amber-500/40 hover:text-white">进入系统</a>
+  </div>
+</div>
+{% endblock %}
