@@ -1,0 +1,48 @@
+:root {
+  --gold: #d4af37;
+  --text-body: #e5e7eb;
+}
+
+body.theme-root {
+  background: linear-gradient(135deg, #050505 0%, #001529 100%);
+  min-height: 100vh;
+  color: var(--text-body);
+}
+
+.text-gold {
+  color: var(--gold);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  border-radius: 0.75rem;
+}
+
+#toast-root {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toast-item {
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  color: var(--gold);
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  margin-top: 0.5rem;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast-item.show {
+  opacity: 1;
+  transform: translateY(0);
+}

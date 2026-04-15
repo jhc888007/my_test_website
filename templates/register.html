@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}注册{% endblock %}
+{% block body %}
+<div class="min-h-screen flex items-center justify-center p-6">
+  <div class="glass-card w-full max-w-md p-8">
+    <h1 class="text-2xl font-semibold text-gold mb-6 text-center">注册</h1>
+    {% if error %}
+    <p class="text-red-400 text-sm mb-4 text-center">{{ error }}</p>
+    {% endif %}
+    <form method="post" class="space-y-4">
+      <div>
+        <label class="block text-sm text-[#E5E7EB] mb-1">用户名</label>
+        <input name="username" type="text" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+      </div>
+      <div>
+        <label class="block text-sm text-[#E5E7EB] mb-1">密码</label>
+        <input name="password" type="password" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+      </div>
+      <div>
+        <label class="block text-sm text-[#E5E7EB] mb-1">身份</label>
+        <select name="role" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]">
+          <option value="TRUSTEE">管理人</option>
+          <option value="BENEFICIARY">受益人</option>
+        </select>
+      </div>
+      <button type="submit" class="w-full py-2 rounded-md bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.4)] text-gold font-medium hover:bg-[rgba(212,175,55,0.25)] transition">注册</button>
+    </form>
+    <p class="mt-6 text-center text-sm text-[#9CA3AF]">
+      <a href="{{ url_for('login') }}" class="text-gold hover:underline">返回登录</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

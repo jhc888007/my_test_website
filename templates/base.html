@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}信托资产{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='custom.css') }}" />
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="theme-root">
+  <div id="toast-root"></div>
+  {% block body %}{% endblock %}
+  <script>
+    function showToast(message) {
+      var root = document.getElementById('toast-root');
+      var el = document.createElement('div');
+      el.className = 'toast-item';
+      el.textContent = message;
+      root.appendChild(el);
+      requestAnimationFrame(function () { el.classList.add('show'); });
+      setTimeout(function () {
+        el.classList.remove('show');
+        setTimeout(function () { root.removeChild(el); }, 300);
+      }, 2400);
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

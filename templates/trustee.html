@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}管理人后台{% endblock %}
+{% block body %}
+<div class="min-h-screen p-6 md:p-10 max-w-5xl mx-auto">
+  <header class="flex flex-wrap items-center justify-between gap-4 mb-10">
+    <h1 class="text-3xl font-semibold text-gold">管理人后台</h1>
+    <a href="{{ url_for('logout') }}" class="text-sm text-[#E5E7EB] border border-[rgba(212,175,55,0.35)] rounded-md px-4 py-2 hover:bg-[rgba(212,175,55,0.1)]">退出</a>
+  </header>
+
+  <section class="glass-card p-6 md:p-8 mb-10">
+    <h2 class="text-xl text-gold font-medium mb-6">资金划拨</h2>
+    <form id="allocate-form" class="grid gap-4 md:grid-cols-2">
+      <div class="md:col-span-2">
+        <label class="block text-sm text-[#E5E7EB] mb-1">受益人</label>
+        <select id="beneficiary_id" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]">
+          <option value="">请选择</option>
+          {% for b in beneficiaries %}
+          <option value="{{ b.id }}">{{ b.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm text-[#E5E7EB] mb-1">信托总额</label>
+        <input id="total_amount" type="number" step="0.01" min="0.01" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+      </div>
+      <div>
+        <label class="block text-sm text-[#E5E7EB] mb-1">归属年限 (N 年)</label>
+        <input id="years_count" type="number" min="1" step="1" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+      </div>
+      <div class="md:col-span-2">
+        <button type="submit" class="px-6 py-2 rounded-md bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.4)] text-gold font-medium hover:bg-[rgba(212,175,55,0.25)] transition">提交划拨</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="glass-card p-6 md:p-8 overflow-x-auto">
+    <h2 class="text-xl text-gold font-medium mb-6">用户审计</h2>
+    <table class="w-full text-left text-sm text-[#E5E7EB] border-collapse">
+      <thead>
+        <tr class="border-b border-[rgba(212,175,55,0.2)] text-gold">
+          <th class="py-3 pr-4">ID</th>
+          <th class="py-3 pr-4">用户名</th>
+          <th class="py-3 pr-4">角色</th>
+          <th class="py-3">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr class="border-b border-[rgba(212,175,55,0.08)]">
+          <td class="py-3 pr-4">{{ u.id }}</td>
+          <td class="py-3 pr-4">{{ u.username }}</td>
+          <td class="py-3 pr-4">{{ u.role }}</td>
+          <td class="py-3">
+            <button type="button" data-user-id="{{ u.id }}" class="delete-user px-3 py-1 rounded border border-red-500/50 text-red-300 hover:bg-red-950/40 text-xs">注销</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="py-6 text-[#9CA3AF]">暂无用户</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById('allocate-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var bid = document.getElementById('beneficiary_id').value;
+    var total = parseFloat(document.getElementById('total_amount').value);
+    var years = parseInt(document.getElementById('years_count').value, 10);
+    fetch('{{ url_for("api_allocate") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ beneficiary_id: bid, total_amount: total, years_count: years })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.ok) showToast('资金已划拨');
+      else alert(data.error || '划拨失败');
+    }).catch(function () { alert('网络错误'); });
+  });
+  document.querySelectorAll('.delete-user').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-user-id');
+      if (!confirm('确定注销该用户及其关联资金记录？')) return;
+      fetch('/api/delete_user/' + id, { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok) location.reload();
+          else alert(data.error || '删除失败');
+        })
+        .catch(function () { alert('网络错误'); });
+    });
+  });
+</script>
+{% endblock %}
