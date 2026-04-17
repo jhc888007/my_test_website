@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from database import create_fund_with_vesting, delete_user_cascade, get_db, init_app_db
 
 app = Flask(__name__)
-app.secret_key = "trust-flow-demo-secret-change-in-production"
+app.secret_key = os.environ.get("SECRET_KEY", "trust-flow-demo-secret-change-in-production")
 init_app_db()
 
 

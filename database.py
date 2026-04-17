@@ -8,12 +8,45 @@ from werkzeug.security import generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "trust_flow.db"
 
+IS_POSTGRES = bool(os.environ.get("DATABASE_URL"))
+
+
+class UnifiedConn:
+    def __init__(self, raw_conn, is_postgres: bool):
+        self._raw = raw_conn
+        self._is_postgres = is_postgres
+
+    def execute(self, sql, params=()):
+        if self._is_postgres:
+            sql = sql.replace("?", "%s")
+            cur = self._raw.cursor()
+            cur.execute(sql, params or ())
+            return cur
+        return self._raw.execute(sql, params or ())
+
+    def commit(self):
+        self._raw.commit()
+
+    def close(self):
+        self._raw.close()
+
+    def executescript(self, script: str):
+        if self._is_postgres:
+            raise RuntimeError("executescript is only for SQLite")
+        self._raw.executescript(script)
+
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    if IS_POSTGRES:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        raw = psycopg2.connect(os.environ["DATABASE_URL"], cursor_factory=RealDictCursor)
+        return UnifiedConn(raw, True)
+    raw = sqlite3.connect(DB_PATH)
+    raw.row_factory = sqlite3.Row
+    raw.execute("PRAGMA foreign_keys = ON")
+    return UnifiedConn(raw, False)
 
 
 def _arithmetic_vesting_rows(total_amount: float, years_n: int, base_dt: datetime):
@@ -37,43 +70,90 @@ def _arithmetic_vesting_rows(total_amount: float, years_n: int, base_dt: datetim
     return rows
 
 
+def _init_db_sqlite(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS funds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trustee_id INTEGER NOT NULL REFERENCES users(id),
+            beneficiary_id INTEGER NOT NULL REFERENCES users(id),
+            total_amount REAL NOT NULL,
+            years_n INTEGER NOT NULL CHECK (years_n >= 1),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS vesting_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+            year_index INTEGER NOT NULL,
+            planned_unlock_at TEXT NOT NULL,
+            proportion REAL NOT NULL,
+            unlock_amount REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT '待解锁'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id);
+        CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id);
+        CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id);
+        """
+    )
+
+
+def _init_db_postgres(conn):
+    stmts = [
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
+            created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS funds (
+            id SERIAL PRIMARY KEY,
+            trustee_id INTEGER NOT NULL REFERENCES users(id),
+            beneficiary_id INTEGER NOT NULL REFERENCES users(id),
+            total_amount DOUBLE PRECISION NOT NULL,
+            years_n INTEGER NOT NULL CHECK (years_n >= 1),
+            created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS vesting_schedules (
+            id SERIAL PRIMARY KEY,
+            fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+            year_index INTEGER NOT NULL,
+            planned_unlock_at TEXT NOT NULL,
+            proportion DOUBLE PRECISION NOT NULL,
+            unlock_amount DOUBLE PRECISION NOT NULL,
+            status TEXT NOT NULL DEFAULT '待解锁'
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id)",
+        "CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id)",
+    ]
+    for s in stmts:
+        conn.execute(s)
+
+
 def init_db():
     conn = get_db()
     try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS funds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trustee_id INTEGER NOT NULL REFERENCES users(id),
-                beneficiary_id INTEGER NOT NULL REFERENCES users(id),
-                total_amount REAL NOT NULL,
-                years_n INTEGER NOT NULL CHECK (years_n >= 1),
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS vesting_schedules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
-                year_index INTEGER NOT NULL,
-                planned_unlock_at TEXT NOT NULL,
-                proportion REAL NOT NULL,
-                unlock_amount REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT '待解锁'
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id);
-            CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id);
-            CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id);
-            """
-        )
+        if IS_POSTGRES:
+            _init_db_postgres(conn)
+        else:
+            _init_db_sqlite(conn)
         conn.commit()
     finally:
         conn.close()
@@ -93,6 +173,28 @@ def _fund_exists_for_pair(conn, trustee_id: int, beneficiary_id: int, total: flo
         (trustee_id, beneficiary_id, total, years),
     ).fetchone()
     return row is not None
+
+
+def _insert_fund_id(conn, tid, bid, total, yn, created: str) -> int:
+    if IS_POSTGRES:
+        cur = conn.execute(
+            """
+            INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (tid, bid, total, yn, created),
+        )
+        row = cur.fetchone()
+        return row["id"]
+    cur = conn.execute(
+        """
+        INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (tid, bid, total, yn, created),
+    )
+    return cur.lastrowid
 
 
 def seed_if_needed():
@@ -127,14 +229,7 @@ def seed_if_needed():
             if _fund_exists_for_pair(conn, tid, bid, total, yn):
                 continue
             created = now.isoformat(sep=" ", timespec="seconds")
-            cur = conn.execute(
-                """
-                INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (tid, bid, total, yn, created),
-            )
-            fund_id = cur.lastrowid
+            fund_id = _insert_fund_id(conn, tid, bid, total, yn, created)
             base_dt = now
             for row in _arithmetic_vesting_rows(total, yn, base_dt):
                 conn.execute(
@@ -162,14 +257,7 @@ def create_fund_with_vesting(trustee_id: int, beneficiary_id: int, total_amount:
     try:
         now = datetime.utcnow()
         created = now.isoformat(sep=" ", timespec="seconds")
-        cur = conn.execute(
-            """
-            INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (trustee_id, beneficiary_id, total_amount, years_n, created),
-        )
-        fund_id = cur.lastrowid
+        fund_id = _insert_fund_id(conn, trustee_id, beneficiary_id, total_amount, years_n, created)
         base_dt = now
         for row in _arithmetic_vesting_rows(total_amount, years_n, base_dt):
             conn.execute(
