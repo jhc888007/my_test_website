@@ -1,0 +1,60 @@
+{% extends "layout_app.html" %}
+{% block title %}资金划拨 — Trust-Flow{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto anim-fade-in-up">
+  <h2 class="text-2xl font-bold text-gold mb-2">资金划拨</h2>
+  <p class="text-body/70 text-sm mb-8">将资金注入数字金库，按算术级数阶梯归属。</p>
+  {% if error %}
+  <div class="glass px-4 py-3 mb-6 text-sm text-red-300 border-red-500/30">{{ error }}</div>
+  {% endif %}
+  <div class="glass p-8">
+    <form id="alloc-form" method="post" action="{{ url_for('trustee_allocation') }}" class="space-y-6">
+      <div>
+        <label class="block text-xs text-body/70 mb-1">选择受益人</label>
+        <select name="beneficiary_id" required class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
+          <option value="">请选择</option>
+          {% for b in beneficiaries %}
+          <option value="{{ b.id }}">{{ b.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-body/70 mb-1">发放总金额（美元）</label>
+        <input name="total_amount" type="number" step="0.01" min="0" required class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50" placeholder="例如 1000000">
+      </div>
+      <div>
+        <label class="block text-xs text-body/70 mb-1">归属年限 N 年</label>
+        <input name="years_n" type="number" min="1" required class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50" placeholder="例如 4">
+      </div>
+      <button id="sign-btn" type="submit" class="w-full py-3.5 rounded-xl font-bold text-black bg-[#D4AF37] hover:brightness-110 shadow-lg shadow-black/40 transition flex items-center justify-center gap-2">
+        <span id="btn-label">签署智能合约</span>
+        <span id="btn-spin" class="hidden w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin"></span>
+      </button>
+    </form>
+  </div>
+</div>
+<div id="toast" class="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 hidden px-6 py-4 rounded-xl glass text-gold font-semibold shadow-2xl border border-[rgba(212,175,55,0.4)] toast-enter">
+  资金已成功注入数字金库
+</div>
+<script>
+(function(){
+  const form = document.getElementById('alloc-form');
+  const btn = document.getElementById('sign-btn');
+  const spin = document.getElementById('btn-spin');
+  const label = document.getElementById('btn-label');
+  const toast = document.getElementById('toast');
+  const ok = {{ success|default(false)|tojson }};
+  if (form && btn) {
+    form.addEventListener('submit', function(){
+      spin.classList.remove('hidden');
+      label.textContent = '签署中…';
+      btn.setAttribute('disabled', 'disabled');
+    });
+  }
+  if (ok && toast) {
+    toast.classList.remove('hidden');
+    setTimeout(function(){ toast.classList.add('hidden'); }, 4200);
+  }
+})();
+</script>
+{% endblock %}

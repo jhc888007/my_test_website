@@ -1,187 +1,209 @@
+import os
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "data" / "trust.db"
+from werkzeug.security import generate_password_hash
 
-DDL = """
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('TRUSTEE', 'BENEFICIARY'))
-);
-
-CREATE TABLE IF NOT EXISTS funds (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    trustee_id INTEGER NOT NULL,
-    beneficiary_id INTEGER NOT NULL,
-    total_amount REAL NOT NULL,
-    years_count INTEGER NOT NULL,
-    FOREIGN KEY(beneficiary_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS vesting_schedules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    fund_id INTEGER NOT NULL,
-    year_index INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    FOREIGN KEY(fund_id) REFERENCES funds(id) ON DELETE CASCADE
-);
-"""
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "trust_flow.db"
 
 
-def get_connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def _arithmetic_vesting_rows(total_amount: float, years_n: int, base_dt: datetime):
+    if years_n < 1:
+        return []
+    s = years_n * (years_n + 1) / 2
+    rows = []
+    for i in range(1, years_n + 1):
+        prop = i / s
+        amt = total_amount * i / s
+        unlock_at = base_dt + timedelta(days=365 * (i - 1))
+        rows.append(
+            {
+                "year_index": i,
+                "planned_unlock_at": unlock_at.isoformat(sep=" ", timespec="seconds"),
+                "proportion": prop,
+                "unlock_amount": amt,
+                "status": "待解锁",
+            }
+        )
+    return rows
+
+
 def init_db():
-    conn = get_connection()
+    conn = get_db()
     try:
-        conn.executescript(DDL)
-        conn.execute(
-            "INSERT OR IGNORE INTO users (username, password, role) VALUES ('admin', 'admin', 'TRUSTEE')"
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS funds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trustee_id INTEGER NOT NULL REFERENCES users(id),
+                beneficiary_id INTEGER NOT NULL REFERENCES users(id),
+                total_amount REAL NOT NULL,
+                years_n INTEGER NOT NULL CHECK (years_n >= 1),
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS vesting_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+                year_index INTEGER NOT NULL,
+                planned_unlock_at TEXT NOT NULL,
+                proportion REAL NOT NULL,
+                unlock_amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT '待解锁'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id);
+            CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id);
+            CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id);
+            """
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def generate_vesting_schedules(total_amount, years_count):
-    sum_of_years = sum(range(1, years_count + 1))
-    schedules = []
-    for year in range(1, years_count + 1):
-        amount_for_year = (year / sum_of_years) * total_amount
-        schedules.append({"year_index": year, "amount": amount_for_year})
-    return schedules
+def _user_id_by_name(conn, username: str):
+    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+    return row["id"] if row else None
 
 
-def get_user_by_username(username):
-    conn = get_connection()
+def _fund_exists_for_pair(conn, trustee_id: int, beneficiary_id: int, total: float, years: int):
+    row = conn.execute(
+        """
+        SELECT id FROM funds
+        WHERE trustee_id = ? AND beneficiary_id = ? AND total_amount = ? AND years_n = ?
+        """,
+        (trustee_id, beneficiary_id, total, years),
+    ).fetchone()
+    return row is not None
+
+
+def seed_if_needed():
+    conn = get_db()
     try:
-        row = conn.execute(
-            "SELECT id, username, password, role FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def get_user_by_id(user_id):
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT id, username, password, role FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def create_user(username, password, role):
-    conn = get_connection()
-    try:
-        cur = conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, password, role),
-        )
+        now = datetime.utcnow()
+        users_seed = [
+            ("admin", "admin", "TRUSTEE"),
+            ("Alexander", "123", "BENEFICIARY"),
+            ("Isabella", "123", "BENEFICIARY"),
+        ]
+        for uname, pwd, role in users_seed:
+            if conn.execute("SELECT 1 FROM users WHERE username = ?", (uname,)).fetchone():
+                continue
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                (uname, generate_password_hash(pwd, method="pbkdf2:sha256"), role),
+            )
         conn.commit()
-        return cur.lastrowid
+
+        admin_id = _user_id_by_name(conn, "admin")
+        alex_id = _user_id_by_name(conn, "Alexander")
+        isa_id = _user_id_by_name(conn, "Isabella")
+        if not admin_id or not alex_id or not isa_id:
+            return
+
+        seeds = [
+            (admin_id, alex_id, 500_000_000.0, 5),
+            (admin_id, isa_id, 200_000_000.0, 3),
+        ]
+        for tid, bid, total, yn in seeds:
+            if _fund_exists_for_pair(conn, tid, bid, total, yn):
+                continue
+            created = now.isoformat(sep=" ", timespec="seconds")
+            cur = conn.execute(
+                """
+                INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (tid, bid, total, yn, created),
+            )
+            fund_id = cur.lastrowid
+            base_dt = now
+            for row in _arithmetic_vesting_rows(total, yn, base_dt):
+                conn.execute(
+                    """
+                    INSERT INTO vesting_schedules
+                    (fund_id, year_index, planned_unlock_at, proportion, unlock_amount, status)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        fund_id,
+                        row["year_index"],
+                        row["planned_unlock_at"],
+                        row["proportion"],
+                        row["unlock_amount"],
+                        row["status"],
+                    ),
+                )
+        conn.commit()
     finally:
         conn.close()
 
 
-def list_beneficiaries():
-    conn = get_connection()
+def create_fund_with_vesting(trustee_id: int, beneficiary_id: int, total_amount: float, years_n: int):
+    conn = get_db()
     try:
-        rows = conn.execute(
-            "SELECT id, username FROM users WHERE role = 'BENEFICIARY' ORDER BY id"
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
-def list_users_for_audit():
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, username, role FROM users WHERE username != 'admin' ORDER BY id"
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
-def allocate_funds(trustee_id, beneficiary_id, total_amount, years_count):
-    schedules = generate_vesting_schedules(total_amount, years_count)
-    conn = get_connection()
-    try:
+        now = datetime.utcnow()
+        created = now.isoformat(sep=" ", timespec="seconds")
         cur = conn.execute(
             """
-            INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_count)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (trustee_id, beneficiary_id, total_amount, years_count),
+            (trustee_id, beneficiary_id, total_amount, years_n, created),
         )
         fund_id = cur.lastrowid
-        for s in schedules:
+        base_dt = now
+        for row in _arithmetic_vesting_rows(total_amount, years_n, base_dt):
             conn.execute(
                 """
-                INSERT INTO vesting_schedules (fund_id, year_index, amount)
-                VALUES (?, ?, ?)
+                INSERT INTO vesting_schedules
+                (fund_id, year_index, planned_unlock_at, proportion, unlock_amount, status)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (fund_id, s["year_index"], s["amount"]),
+                (
+                    fund_id,
+                    row["year_index"],
+                    row["planned_unlock_at"],
+                    row["proportion"],
+                    row["unlock_amount"],
+                    row["status"],
+                ),
             )
         conn.commit()
         return fund_id
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
 
 
-def delete_user(user_id):
-    conn = get_connection()
+def delete_user_cascade(user_id: int) -> bool:
+    conn = get_db()
     try:
-        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.execute("DELETE FROM funds WHERE beneficiary_id = ? OR trustee_id = ?", (user_id, user_id))
+        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
 
-def beneficiary_total_amount(beneficiary_id):
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(total_amount), 0) AS t FROM funds WHERE beneficiary_id = ?",
-            (beneficiary_id,),
-        ).fetchone()
-        return float(row["t"]) if row else 0.0
-    finally:
-        conn.close()
-
-
-def beneficiary_vesting_by_year(beneficiary_id):
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT vs.year_index AS year_index, SUM(vs.amount) AS amount
-            FROM vesting_schedules vs
-            JOIN funds f ON f.id = vs.fund_id
-            WHERE f.beneficiary_id = ?
-            GROUP BY vs.year_index
-            ORDER BY vs.year_index
-            """,
-            (beneficiary_id,),
-        ).fetchall()
-        return [{"year_index": r["year_index"], "amount": float(r["amount"])} for r in rows]
-    finally:
-        conn.close()
+def init_app_db():
+    init_db()
+    seed_if_needed()

@@ -1,25 +1,27 @@
 {% extends "base.html" %}
-{% block title %}登录{% endblock %}
+{% block title %}登录 — Trust-Flow{% endblock %}
 {% block body %}
 <div class="min-h-screen flex items-center justify-center p-6">
-  <div class="glass-card w-full max-w-md p-8">
-    <h1 class="text-2xl font-semibold text-gold mb-6 text-center">登录</h1>
+  <div class="glass w-full max-w-md p-10 anim-fade-in-up">
+    <h1 class="text-2xl font-bold text-gold text-center mb-2">Trust-Flow</h1>
+    <p class="text-center text-body/80 text-sm mb-8">财富引擎 · 安全登录</p>
     {% if error %}
-    <p class="text-red-400 text-sm mb-4 text-center">{{ error }}</p>
+    <div class="mb-4 text-sm text-red-400 text-center">{{ error }}</div>
     {% endif %}
-    <form method="post" class="space-y-4">
+    <form method="post" action="{{ url_for('login') }}" class="space-y-5">
+      <input type="hidden" name="next" value="{{ request.args.get('next','') }}">
       <div>
-        <label class="block text-sm text-[#E5E7EB] mb-1">用户名</label>
-        <input name="username" type="text" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+        <label class="block text-xs text-body/70 mb-1">用户名</label>
+        <input name="username" required autocomplete="username" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
       </div>
       <div>
-        <label class="block text-sm text-[#E5E7EB] mb-1">密码</label>
-        <input name="password" type="password" required class="w-full rounded-md bg-black/30 border border-[rgba(212,175,55,0.25)] px-3 py-2 text-[#E5E7EB] focus:outline-none focus:border-[#D4AF37]" />
+        <label class="block text-xs text-body/70 mb-1">密码</label>
+        <input name="password" type="password" required autocomplete="current-password" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
       </div>
-      <button type="submit" class="w-full py-2 rounded-md bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.4)] text-gold font-medium hover:bg-[rgba(212,175,55,0.25)] transition">登录</button>
+      <button type="submit" class="w-full py-3 rounded-xl font-bold text-black bg-[#D4AF37] hover:brightness-110 shadow-lg shadow-black/40 transition">登录</button>
     </form>
-    <p class="mt-6 text-center text-sm text-[#9CA3AF]">
-      <a href="{{ url_for('register') }}" class="text-gold hover:underline">注册账号</a>
+    <p class="text-center text-sm mt-6 text-body/60">
+      尚无账号？<a href="{{ url_for('register') }}" class="text-gold font-semibold hover:underline">注册</a>
     </p>
   </div>
 </div>

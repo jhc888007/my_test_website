@@ -1,78 +1,59 @@
+import json
 import os
+from collections import defaultdict
 from functools import wraps
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
-import database as db
+from database import create_fund_with_vesting, delete_user_cascade, get_db, init_app_db
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-trust-demo-secret")
-
-
-def ensure_db():
-    db.init_db()
+app.secret_key = "trust-flow-demo-secret-change-in-production"
+init_app_db()
 
 
 def login_required(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
-        if "user_id" not in session:
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs)
+
+    return wrapped
+
+
+def trustee_only(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if session.get("role") != "TRUSTEE":
+            if session.get("role") == "BENEFICIARY":
+                return redirect(url_for("beneficiary_dashboard"))
             return redirect(url_for("login"))
         return f(*args, **kwargs)
 
-    return decorated
+    return wrapped
 
 
-def trustee_required(f):
+def beneficiary_only(f):
     @wraps(f)
-    @login_required
-    def decorated(*args, **kwargs):
-        if session.get("role") != "TRUSTEE":
-            return redirect(url_for("beneficiary"))
-        return f(*args, **kwargs)
-
-    return decorated
-
-
-def beneficiary_required(f):
-    @wraps(f)
-    @login_required
-    def decorated(*args, **kwargs):
+    def wrapped(*args, **kwargs):
         if session.get("role") != "BENEFICIARY":
-            return redirect(url_for("trustee"))
+            if session.get("role") == "TRUSTEE":
+                return redirect(url_for("trustee_allocation"))
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
 
-    return decorated
+    return wrapped
 
 
-_db_initialized = False
-
-
-@app.before_request
-def before_request():
-    global _db_initialized
-    if not _db_initialized:
-        ensure_db()
-        _db_initialized = True
-
-
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password") or ""
-        role = request.form.get("role") or ""
-        if role not in ("TRUSTEE", "BENEFICIARY"):
-            return render_template("register.html", error="请选择有效身份")
-        if not username or not password:
-            return render_template("register.html", error="用户名和密码不能为空")
-        if username.lower() == "admin":
-            return render_template("register.html", error="该用户名不可用")
-        if db.get_user_by_username(username):
-            return render_template("register.html", error="用户名已存在")
-        db.create_user(username, password, role)
+@app.route("/")
+def index():
+    if not session.get("user_id"):
         return redirect(url_for("login"))
-    return render_template("register.html")
+    if session.get("role") == "TRUSTEE":
+        return redirect(url_for("trustee_allocation"))
+    return redirect(url_for("beneficiary_dashboard"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -80,89 +61,222 @@ def login():
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
-        user = db.get_user_by_username(username)
-        if not user or user["password"] != password:
-            return render_template("login.html", error="用户名或密码错误")
-        session["user_id"] = user["id"]
-        session["role"] = user["role"]
-        if user["role"] == "TRUSTEE":
-            return redirect(url_for("trustee"))
-        return redirect(url_for("beneficiary"))
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT id, password_hash, role FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and check_password_hash(row["password_hash"], password):
+            session["user_id"] = row["id"]
+            session["role"] = row["role"]
+            session["username"] = username
+            nxt = request.args.get("next") or request.form.get("next")
+            if nxt and nxt.startswith("/"):
+                return redirect(nxt)
+            return redirect(url_for("index"))
+        return render_template("login.html", error="用户名或密码错误")
     return render_template("login.html")
 
 
-@app.route("/logout")
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        role = request.form.get("role") or "BENEFICIARY"
+        if role not in ("TRUSTEE", "BENEFICIARY"):
+            role = "BENEFICIARY"
+        if not username or not password:
+            return render_template("register.html", error="请填写用户名与密码")
+        conn = get_db()
+        try:
+            if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+                return render_template("register.html", error="用户名已存在")
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                (username, generate_password_hash(password, method="pbkdf2:sha256"), role),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return redirect(url_for("login"))
+    return render_template("register.html")
+
+
+@app.post("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
 
 
-@app.route("/trustee")
-@trustee_required
-def trustee():
-    beneficiaries = db.list_beneficiaries()
-    users = db.list_users_for_audit()
-    return render_template("trustee.html", beneficiaries=beneficiaries, users=users)
-
-
-@app.route("/api/allocate", methods=["POST"])
-@trustee_required
-def api_allocate():
-    data = request.get_json(silent=True) or {}
-    try:
-        beneficiary_id = int(data.get("beneficiary_id"))
-        total_amount = float(data.get("total_amount"))
-        years_count = int(data.get("years_count"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "参数无效"}), 400
-    if years_count < 1 or total_amount <= 0:
-        return jsonify({"ok": False, "error": "总额与年限不合法"}), 400
-    b = db.get_user_by_id(beneficiary_id)
-    if not b or b["role"] != "BENEFICIARY":
-        return jsonify({"ok": False, "error": "受益人不存在"}), 400
-    trustee_id = session["user_id"]
-    db.allocate_funds(trustee_id, beneficiary_id, total_amount, years_count)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/delete_user/<int:user_id>", methods=["POST"])
-@trustee_required
-def api_delete_user(user_id):
-    target = db.get_user_by_id(user_id)
-    if not target:
-        return jsonify({"ok": False, "error": "用户不存在"}), 404
-    if target["username"] == "admin":
-        return jsonify({"ok": False, "error": "不能注销 admin"}), 403
-    if user_id == session["user_id"]:
-        return jsonify({"ok": False, "error": "不能注销当前账号"}), 403
-    db.delete_user(user_id)
-    return jsonify({"ok": True})
-
-
-@app.route("/beneficiary")
-@beneficiary_required
-def beneficiary():
-    uid = session["user_id"]
-    total = db.beneficiary_total_amount(uid)
-    vesting = db.beneficiary_vesting_by_year(uid)
-    chart_labels = [f"第{y['year_index']}年" for y in vesting]
-    chart_values = [y["amount"] for y in vesting]
+@app.route("/trustee/allocation", methods=["GET", "POST"])
+@login_required
+@trustee_only
+def trustee_allocation():
+    success = False
+    if request.method == "POST":
+        bid = request.form.get("beneficiary_id")
+        try:
+            total = float(request.form.get("total_amount") or 0)
+            years_n = int(request.form.get("years_n") or 0)
+        except (TypeError, ValueError):
+            return render_template(
+                "trustee_allocation.html",
+                beneficiaries=_list_beneficiaries(),
+                error="金额或年限格式无效",
+            )
+        if not bid or years_n < 1 or total <= 0:
+            return render_template(
+                "trustee_allocation.html",
+                beneficiaries=_list_beneficiaries(),
+                error="请选择受益人并填写有效金额与年限",
+            )
+        bid = int(bid)
+        conn = get_db()
+        try:
+            r = conn.execute(
+                "SELECT id FROM users WHERE id = ? AND role = 'BENEFICIARY'",
+                (bid,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not r:
+            return render_template(
+                "trustee_allocation.html",
+                beneficiaries=_list_beneficiaries(),
+                error="受益人无效",
+            )
+        create_fund_with_vesting(session["user_id"], bid, total, years_n)
+        success = True
     return render_template(
-        "beneficiary.html",
-        total_amount=total,
-        chart_labels=chart_labels,
-        chart_values=chart_values,
+        "trustee_allocation.html",
+        beneficiaries=_list_beneficiaries(),
+        success=bool(success),
     )
 
 
-@app.route("/")
-def index():
-    if "user_id" in session:
-        if session.get("role") == "TRUSTEE":
-            return redirect(url_for("trustee"))
-        return redirect(url_for("beneficiary"))
-    return redirect(url_for("login"))
+def _list_beneficiaries():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, username FROM users WHERE role = 'BENEFICIARY' ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.route("/trustee/audit")
+@login_required
+@trustee_only
+def trustee_audit():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, username, role, created_at FROM users ORDER BY id"
+        ).fetchall()
+        users = [dict(r) for r in rows]
+    finally:
+        conn.close()
+    return render_template("trustee_audit.html", users=users)
+
+
+@app.delete("/api/users/<int:uid>")
+@login_required
+@trustee_only
+def api_delete_user(uid):
+    if uid == session.get("user_id"):
+        return {"ok": False, "error": "不能注销当前登录账号"}, 400
+    if delete_user_cascade(uid):
+        return {"ok": True}
+    return {"ok": False, "error": "用户不存在"}, 404
+
+
+@app.route("/trustee/tree")
+@login_required
+@trustee_only
+def trustee_tree():
+    conn = get_db()
+    try:
+        ben = conn.execute(
+            "SELECT username FROM users WHERE role = 'BENEFICIARY' ORDER BY id"
+        ).fetchall()
+        names = [r["username"] for r in ben]
+    finally:
+        conn.close()
+    tree_payload = {
+        "name": "Trustee (管理人)",
+        "children": [{"name": n} for n in names],
+    }
+    return render_template("trustee_tree.html", tree_data=tree_payload)
+
+
+@app.route("/beneficiary/dashboard")
+@login_required
+@beneficiary_only
+def beneficiary_dashboard():
+    uid = session["user_id"]
+    conn = get_db()
+    try:
+        total_row = conn.execute(
+            "SELECT COALESCE(SUM(total_amount), 0) AS t FROM funds WHERE beneficiary_id = ?",
+            (uid,),
+        ).fetchone()
+        total_assets = float(total_row["t"] or 0)
+
+        vest_rows = conn.execute(
+            """
+            SELECT v.year_index, v.planned_unlock_at, v.proportion, v.unlock_amount, v.status,
+                   f.id AS fund_id
+            FROM vesting_schedules v
+            JOIN funds f ON f.id = v.fund_id
+            WHERE f.beneficiary_id = ?
+            ORDER BY v.planned_unlock_at, v.id
+            """,
+            (uid,),
+        ).fetchall()
+
+        by_year = defaultdict(float)
+        for r in vest_rows:
+            by_year[r["year_index"]] += float(r["unlock_amount"])
+
+        chart_years = sorted(by_year.keys())
+        chart_amounts = [round(by_year[y], 2) for y in chart_years]
+        chart_labels = [f"第{y}年" for y in chart_years]
+
+        details = []
+        for r in vest_rows:
+            details.append(
+                {
+                    "year_label": f"第{r['year_index']}年",
+                    "planned_unlock_at": r["planned_unlock_at"],
+                    "proportion_pct": round(float(r["proportion"]) * 100, 4),
+                    "unlock_amount": r["unlock_amount"],
+                    "status": r["status"],
+                }
+            )
+    finally:
+        conn.close()
+
+    return render_template(
+        "beneficiary_dashboard.html",
+        total_assets=total_assets,
+        total_assets_fmt=f"{total_assets:,.0f}",
+        chart_labels=json.dumps(chart_labels, ensure_ascii=False),
+        chart_amounts=json.dumps(chart_amounts, ensure_ascii=False),
+        details=details,
+    )
+
+
+@app.route("/beneficiary/macro")
+@login_required
+@beneficiary_only
+def beneficiary_macro():
+    return render_template("beneficiary_macro.html")
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", "5001")))
