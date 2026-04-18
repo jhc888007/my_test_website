@@ -13,6 +13,12 @@ DEFAULT_RULES_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+TABLE_PREFIX = "rxt_"
+T_USERS = TABLE_PREFIX + "users"
+T_VESTING_RULES = TABLE_PREFIX + "vesting_rules"
+T_FUNDS = TABLE_PREFIX + "funds"
+T_VESTING_SCHEDULE = TABLE_PREFIX + "vesting_schedule"
+
 
 def _normalize_database_url(url: str) -> str:
     url = url.strip()
@@ -85,8 +91,8 @@ def init_db() -> None:
         if _is_postgres():
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS users (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_USERS} (
                     id SERIAL PRIMARY KEY,
                     username VARCHAR(128) UNIQUE NOT NULL,
                     password VARCHAR(256) NOT NULL,
@@ -97,8 +103,8 @@ def init_db() -> None:
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS vesting_rules (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_VESTING_RULES} (
                     id SERIAL PRIMARY KEY,
                     rules_json TEXT NOT NULL
                 )
@@ -106,25 +112,25 @@ def init_db() -> None:
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS funds (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_FUNDS} (
                     id SERIAL PRIMARY KEY,
-                    sender_id INTEGER NOT NULL REFERENCES users(id),
-                    receiver_id INTEGER NOT NULL REFERENCES users(id),
+                    sender_id INTEGER NOT NULL REFERENCES {T_USERS}(id),
+                    receiver_id INTEGER NOT NULL REFERENCES {T_USERS}(id),
                     amount DOUBLE PRECISION NOT NULL,
                     fund_date DATE NOT NULL,
                     vesting_cycle INTEGER NOT NULL,
                     note TEXT,
-                    vesting_rule_id INTEGER REFERENCES vesting_rules(id)
+                    vesting_rule_id INTEGER REFERENCES {T_VESTING_RULES}(id)
                 )
                 """,
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS vesting_schedule (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_VESTING_SCHEDULE} (
                     id SERIAL PRIMARY KEY,
-                    fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+                    fund_id INTEGER NOT NULL REFERENCES {T_FUNDS}(id) ON DELETE CASCADE,
                     year_index INTEGER NOT NULL,
                     vested_amount DOUBLE PRECISION NOT NULL,
                     status VARCHAR(32) NOT NULL DEFAULT 'scheduled'
@@ -134,8 +140,8 @@ def init_db() -> None:
         else:
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS users (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_USERS} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
@@ -146,8 +152,8 @@ def init_db() -> None:
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS vesting_rules (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_VESTING_RULES} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     rules_json TEXT NOT NULL
                 )
@@ -155,25 +161,25 @@ def init_db() -> None:
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS funds (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_FUNDS} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender_id INTEGER NOT NULL REFERENCES users(id),
-                    receiver_id INTEGER NOT NULL REFERENCES users(id),
+                    sender_id INTEGER NOT NULL REFERENCES {T_USERS}(id),
+                    receiver_id INTEGER NOT NULL REFERENCES {T_USERS}(id),
                     amount REAL NOT NULL,
                     fund_date TEXT NOT NULL,
                     vesting_cycle INTEGER NOT NULL,
                     note TEXT,
-                    vesting_rule_id INTEGER REFERENCES vesting_rules(id)
+                    vesting_rule_id INTEGER REFERENCES {T_VESTING_RULES}(id)
                 )
                 """,
             )
             _execute(
                 conn,
-                """
-                CREATE TABLE IF NOT EXISTS vesting_schedule (
+                f"""
+                CREATE TABLE IF NOT EXISTS {T_VESTING_SCHEDULE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+                    fund_id INTEGER NOT NULL REFERENCES {T_FUNDS}(id) ON DELETE CASCADE,
                     year_index INTEGER NOT NULL,
                     vested_amount REAL NOT NULL,
                     status TEXT NOT NULL DEFAULT 'scheduled'
@@ -182,17 +188,17 @@ def init_db() -> None:
             )
 
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM vesting_rules")
+        cur.execute(f"SELECT COUNT(*) FROM {T_VESTING_RULES}")
         c = cur.fetchone()[0]
         cur.close()
         if c == 0:
             ph = "%s" if _is_postgres() else "?"
-            _execute(conn, f"INSERT INTO vesting_rules (rules_json) VALUES ({ph})", (DEFAULT_RULES_JSON,))
+            _execute(conn, f"INSERT INTO {T_VESTING_RULES} (rules_json) VALUES ({ph})", (DEFAULT_RULES_JSON,))
 
 
 def get_rules(conn) -> Dict[str, List[float]]:
     cur = conn.cursor()
-    cur.execute("SELECT rules_json FROM vesting_rules ORDER BY id LIMIT 1")
+    cur.execute(f"SELECT rules_json FROM {T_VESTING_RULES} ORDER BY id LIMIT 1")
     row = cur.fetchone()
     cur.close()
     if not row:
@@ -207,18 +213,18 @@ def get_rules(conn) -> Dict[str, List[float]]:
 def set_rules(conn, rules: Dict[str, List[float]]) -> None:
     payload = json.dumps({str(k): [float(x) for x in v] for k, v in rules.items()}, ensure_ascii=False)
     cur = conn.cursor()
-    cur.execute("SELECT id FROM vesting_rules ORDER BY id LIMIT 1")
+    cur.execute(f"SELECT id FROM {T_VESTING_RULES} ORDER BY id LIMIT 1")
     row = cur.fetchone()
     if row:
         if _is_postgres():
-            cur.execute("UPDATE vesting_rules SET rules_json = %s WHERE id = %s", (payload, row[0]))
+            cur.execute(f"UPDATE {T_VESTING_RULES} SET rules_json = %s WHERE id = %s", (payload, row[0]))
         else:
-            cur.execute("UPDATE vesting_rules SET rules_json = ? WHERE id = ?", (payload, row[0]))
+            cur.execute(f"UPDATE {T_VESTING_RULES} SET rules_json = ? WHERE id = ?", (payload, row[0]))
     else:
         if _is_postgres():
-            cur.execute("INSERT INTO vesting_rules (rules_json) VALUES (%s)", (payload,))
+            cur.execute(f"INSERT INTO {T_VESTING_RULES} (rules_json) VALUES (%s)", (payload,))
         else:
-            cur.execute("INSERT INTO vesting_rules (rules_json) VALUES (?)", (payload,))
+            cur.execute(f"INSERT INTO {T_VESTING_RULES} (rules_json) VALUES (?)", (payload,))
     cur.close()
 
 

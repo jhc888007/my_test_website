@@ -8,6 +8,10 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 
 from database import (
     _is_postgres,
+    T_FUNDS,
+    T_USERS,
+    T_VESTING_RULES,
+    T_VESTING_SCHEDULE,
     build_schedule_rows,
     cumulative_vested_amount,
     current_year_vested_total,
@@ -80,7 +84,7 @@ def role_required(role: str):
 
 
 def ensure_active_user(conn, uid: int) -> Optional[Dict[str, Any]]:
-    u = _run_one(conn, f"SELECT id, username, role, status FROM users WHERE id = {_ph()}", (uid,))
+    u = _run_one(conn, f"SELECT id, username, role, status FROM {T_USERS} WHERE id = {_ph()}", (uid,))
     if not u:
         return None
     if u.get("status") == "disabled" and u.get("role") == "B":
@@ -137,12 +141,12 @@ def api_register():
         return jsonify({"ok": False, "message": "请选择角色"}), 400
     ph = _ph()
     with get_connection() as conn:
-        ex = _run_one(conn, f"SELECT id FROM users WHERE username = {ph}", (username,))
+        ex = _run_one(conn, f"SELECT id FROM {T_USERS} WHERE username = {ph}", (username,))
         if ex:
             return jsonify({"ok": False, "message": "用户名已存在"}), 400
         _exec(
             conn,
-            f"INSERT INTO users (username, password, role, status) VALUES ({ph}, {ph}, {ph}, 'active')",
+            f"INSERT INTO {T_USERS} (username, password, role, status) VALUES ({ph}, {ph}, {ph}, 'active')",
             (username, password, role),
         )
     return jsonify({"ok": True, "message": "注册成功！请登录"})
@@ -157,7 +161,7 @@ def api_login():
     with get_connection() as conn:
         u = _run_one(
             conn,
-            f"SELECT id, username, password, role, status FROM users WHERE username = {ph}",
+            f"SELECT id, username, password, role, status FROM {T_USERS} WHERE username = {ph}",
             (username,),
         )
     if not u or u["password"] != password:
@@ -186,21 +190,21 @@ def api_stats_a():
     with get_connection() as conn:
         total_row = _run_one(
             conn,
-            f"SELECT COALESCE(SUM(amount), 0) AS s FROM funds WHERE sender_id = {ph}",
+            f"SELECT COALESCE(SUM(amount), 0) AS s FROM {T_FUNDS} WHERE sender_id = {ph}",
             (uid,),
         )
         cnt_row = _run_one(
             conn,
-            f"SELECT COUNT(*) AS c FROM funds WHERE sender_id = {ph}",
+            f"SELECT COUNT(*) AS c FROM {T_FUNDS} WHERE sender_id = {ph}",
             (uid,),
         )
-        b_cnt = _run_one(conn, "SELECT COUNT(*) AS c FROM users WHERE role = 'B'", ())
-        funds = _run_query(conn, f"SELECT id, amount, fund_date FROM funds WHERE sender_id = {ph}", (uid,))
+        b_cnt = _run_one(conn, f"SELECT COUNT(*) AS c FROM {T_USERS} WHERE role = 'B'", ())
+        funds = _run_query(conn, f"SELECT id, amount, fund_date FROM {T_FUNDS} WHERE sender_id = {ph}", (uid,))
         cy = date.today().year
         year_vest = 0.0
         for fd in funds:
             fd_date = parse_fund_date(str(fd["fund_date"]))
-            sch = _run_query(conn, f"SELECT year_index, vested_amount FROM vesting_schedule WHERE fund_id = {ph}", (fd["id"],))
+            sch = _run_query(conn, f"SELECT year_index, vested_amount FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph}", (fd["id"],))
             for r in sch:
                 yi = int(r["year_index"])
                 if vesting_calendar_year(fd_date, yi) == cy:
@@ -230,8 +234,8 @@ def api_funds():
                 f"""
                 SELECT f.id, f.amount, f.fund_date, f.vesting_cycle, f.note, f.receiver_id,
                        u.username AS receiver_name
-                FROM funds f
-                JOIN users u ON u.id = f.receiver_id
+                FROM {T_FUNDS} f
+                JOIN {T_USERS} u ON u.id = f.receiver_id
                 WHERE f.sender_id = {ph}
                 ORDER BY f.id DESC
                 """,
@@ -258,7 +262,7 @@ def api_funds():
     if vesting_cycle not in (3, 5, 10):
         vesting_cycle = 5
     with get_connection() as conn:
-        ru = _run_one(conn, f"SELECT id, role FROM users WHERE id = {ph}", (int(receiver_id),))
+        ru = _run_one(conn, f"SELECT id, role FROM {T_USERS} WHERE id = {ph}", (int(receiver_id),))
         if not ru or ru["role"] != "B":
             return jsonify({"ok": False, "message": "请选择有效受益人"}), 400
         rules = get_rules(conn)
@@ -266,15 +270,15 @@ def api_funds():
         if key not in rules or len(rules[key]) != vesting_cycle:
             return jsonify({"ok": False, "message": "归属规则未配置"}), 400
         percentages = rules[key]
-        vr = _run_one(conn, "SELECT id FROM vesting_rules ORDER BY id LIMIT 1", ())
+        vr = _run_one(conn, f"SELECT id FROM {T_VESTING_RULES} ORDER BY id LIMIT 1", ())
         vr_id = vr["id"] if vr else None
         fd = parse_fund_date(fund_date)
         fd_str = fd.isoformat()
         if _is_postgres():
             cur = conn.cursor()
             cur.execute(
-                """
-                INSERT INTO funds (sender_id, receiver_id, amount, fund_date, vesting_cycle, note, vesting_rule_id)
+                f"""
+                INSERT INTO {T_FUNDS} (sender_id, receiver_id, amount, fund_date, vesting_cycle, note, vesting_rule_id)
                 VALUES (%s, %s, %s, %s::date, %s, %s, %s)
                 RETURNING id
                 """,
@@ -286,7 +290,7 @@ def api_funds():
             cur = conn.cursor()
             cur.execute(
                 f"""
-                INSERT INTO funds (sender_id, receiver_id, amount, fund_date, vesting_cycle, note, vesting_rule_id)
+                INSERT INTO {T_FUNDS} (sender_id, receiver_id, amount, fund_date, vesting_cycle, note, vesting_rule_id)
                 VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
                 """,
                 (uid, int(receiver_id), amount_f, fd_str, vesting_cycle, note or None, vr_id),
@@ -297,7 +301,7 @@ def api_funds():
         for yi, va in sched:
             _exec(
                 conn,
-                f"INSERT INTO vesting_schedule (fund_id, year_index, vested_amount, status) VALUES ({ph}, {ph}, {ph}, 'scheduled')",
+                f"INSERT INTO {T_VESTING_SCHEDULE} (fund_id, year_index, vested_amount, status) VALUES ({ph}, {ph}, {ph}, 'scheduled')",
                 (fid, yi, va),
             )
     return jsonify({"ok": True, "message": "发放成功！"})
@@ -314,12 +318,12 @@ def api_fund_one(fund_id: int):
         with get_connection() as conn:
             frow = _run_one(
                 conn,
-                f"SELECT id FROM funds WHERE id = {ph} AND sender_id = {ph}",
+                f"SELECT id FROM {T_FUNDS} WHERE id = {ph} AND sender_id = {ph}",
                 (fund_id, uid),
             )
             if not frow:
                 return jsonify({"ok": False, "message": "记录不存在"}), 404
-            _exec(conn, f"DELETE FROM funds WHERE id = {ph}", (fund_id,))
+            _exec(conn, f"DELETE FROM {T_FUNDS} WHERE id = {ph}", (fund_id,))
         return jsonify({"ok": True, "message": "已删除"})
     data = request.get_json(force=True, silent=True) or {}
     amount = data.get("amount")
@@ -340,7 +344,7 @@ def api_fund_one(fund_id: int):
     with get_connection() as conn:
         frow = _run_one(
             conn,
-            f"SELECT id, receiver_id, fund_date FROM funds WHERE id = {ph} AND sender_id = {ph}",
+            f"SELECT id, receiver_id, fund_date FROM {T_FUNDS} WHERE id = {ph} AND sender_id = {ph}",
             (fund_id, uid),
         )
         if not frow:
@@ -350,15 +354,15 @@ def api_fund_one(fund_id: int):
         if key not in rules or len(rules[key]) != vc:
             return jsonify({"ok": False, "message": "归属规则未配置"}), 400
         percentages = rules[key]
-        vr = _run_one(conn, "SELECT id FROM vesting_rules ORDER BY id LIMIT 1", ())
+        vr = _run_one(conn, f"SELECT id FROM {T_VESTING_RULES} ORDER BY id LIMIT 1", ())
         vr_id = vr["id"] if vr else None
         fd = parse_fund_date(str(frow["fund_date"]))
         fd_str = fd.isoformat()
         if _is_postgres():
             _exec(
                 conn,
-                """
-                UPDATE funds SET amount = %s, vesting_cycle = %s, note = %s, vesting_rule_id = %s, fund_date = %s::date
+                f"""
+                UPDATE {T_FUNDS} SET amount = %s, vesting_cycle = %s, note = %s, vesting_rule_id = %s, fund_date = %s::date
                 WHERE id = %s
                 """,
                 (amount_f, vc, (note or "").strip() or None, vr_id, fd_str, fund_id),
@@ -367,17 +371,17 @@ def api_fund_one(fund_id: int):
             _exec(
                 conn,
                 f"""
-                UPDATE funds SET amount = {ph}, vesting_cycle = {ph}, note = {ph}, vesting_rule_id = {ph}, fund_date = {ph}
+                UPDATE {T_FUNDS} SET amount = {ph}, vesting_cycle = {ph}, note = {ph}, vesting_rule_id = {ph}, fund_date = {ph}
                 WHERE id = {ph}
                 """,
                 (amount_f, vc, (note or "").strip() or None, vr_id, fd_str, fund_id),
             )
-        _exec(conn, f"DELETE FROM vesting_schedule WHERE fund_id = {ph}", (fund_id,))
+        _exec(conn, f"DELETE FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph}", (fund_id,))
         sched = build_schedule_rows(amount_f, percentages)
         for yi, va in sched:
             _exec(
                 conn,
-                f"INSERT INTO vesting_schedule (fund_id, year_index, vested_amount, status) VALUES ({ph}, {ph}, {ph}, 'scheduled')",
+                f"INSERT INTO {T_VESTING_SCHEDULE} (fund_id, year_index, vested_amount, status) VALUES ({ph}, {ph}, {ph}, 'scheduled')",
                 (fund_id, yi, va),
             )
     return jsonify({"ok": True, "message": "已更新"})
@@ -389,22 +393,22 @@ def api_users_b():
     if session.get("role") != "A":
         return jsonify({"ok": False, "message": "无权限"}), 403
     with get_connection() as conn:
-        users = _run_query(conn, "SELECT id, username, status FROM users WHERE role = 'B' ORDER BY id", ())
+        users = _run_query(conn, f"SELECT id, username, status FROM {T_USERS} WHERE role = 'B' ORDER BY id", ())
         out = []
         for u in users:
             uid = u["id"]
             ph = _ph()
             total_row = _run_one(
                 conn,
-                f"SELECT COALESCE(SUM(amount), 0) AS s FROM funds WHERE receiver_id = {ph}",
+                f"SELECT COALESCE(SUM(amount), 0) AS s FROM {T_FUNDS} WHERE receiver_id = {ph}",
                 (uid,),
             )
-            funds = _run_query(conn, f"SELECT id, amount, fund_date FROM funds WHERE receiver_id = {ph}", (uid,))
+            funds = _run_query(conn, f"SELECT id, amount, fund_date FROM {T_FUNDS} WHERE receiver_id = {ph}", (uid,))
             vested = 0.0
             for fd in funds:
                 sch = _run_query(
                     conn,
-                    f"SELECT year_index, vested_amount FROM vesting_schedule WHERE fund_id = {ph}",
+                    f"SELECT year_index, vested_amount FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph}",
                     (fd["id"],),
                 )
                 fd_date = parse_fund_date(str(fd["fund_date"]))
@@ -432,10 +436,10 @@ def api_user_status(user_id: int):
         return jsonify({"ok": False, "message": "参数错误"}), 400
     ph = _ph()
     with get_connection() as conn:
-        u = _run_one(conn, f"SELECT id, role FROM users WHERE id = {ph}", (user_id,))
+        u = _run_one(conn, f"SELECT id, role FROM {T_USERS} WHERE id = {ph}", (user_id,))
         if not u or u["role"] != "B":
             return jsonify({"ok": False, "message": "用户不存在"}), 404
-        _exec(conn, f"UPDATE users SET status = {ph} WHERE id = {ph}", (st, user_id))
+        _exec(conn, f"UPDATE {T_USERS} SET status = {ph} WHERE id = {ph}", (st, user_id))
     return jsonify({"ok": True})
 
 
@@ -481,17 +485,17 @@ def _b_overview(uid: int) -> Dict[str, Any]:
             return {"error": "disabled", "message": "账号已禁用"}
         total_row = _run_one(
             conn,
-            f"SELECT COALESCE(SUM(amount), 0) AS s FROM funds WHERE receiver_id = {ph}",
+            f"SELECT COALESCE(SUM(amount), 0) AS s FROM {T_FUNDS} WHERE receiver_id = {ph}",
             (uid,),
         )
         total_amt = float(total_row["s"] if total_row else 0)
-        funds = _run_query(conn, f"SELECT id, amount, fund_date FROM funds WHERE receiver_id = {ph}", (uid,))
+        funds = _run_query(conn, f"SELECT id, amount, fund_date FROM {T_FUNDS} WHERE receiver_id = {ph}", (uid,))
         vested = 0.0
         current_year = 0.0
         for fd in funds:
             sch = _run_query(
                 conn,
-                f"SELECT year_index, vested_amount FROM vesting_schedule WHERE fund_id = {ph}",
+                f"SELECT year_index, vested_amount FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph}",
                 (fd["id"],),
             )
             fd_date = parse_fund_date(str(fd["fund_date"]))
@@ -540,8 +544,8 @@ def api_me_funds():
             f"""
             SELECT f.id, f.amount, f.fund_date, f.vesting_cycle, f.note,
                    u.username AS sender_name
-            FROM funds f
-            JOIN users u ON u.id = f.sender_id
+            FROM {T_FUNDS} f
+            JOIN {T_USERS} u ON u.id = f.sender_id
             WHERE f.receiver_id = {ph}
             ORDER BY f.id DESC
             """,
@@ -568,8 +572,8 @@ def api_me_vesting():
             conn,
             f"""
             SELECT f.id, f.amount, f.fund_date, f.vesting_cycle, f.note, u.username AS sender_name
-            FROM funds f
-            JOIN users u ON u.id = f.sender_id
+            FROM {T_FUNDS} f
+            JOIN {T_USERS} u ON u.id = f.sender_id
             WHERE f.receiver_id = {ph}
             ORDER BY f.id DESC
             """,
@@ -580,7 +584,7 @@ def api_me_vesting():
             fid = fd["id"]
             sch = _run_query(
                 conn,
-                f"SELECT year_index, vested_amount FROM vesting_schedule WHERE fund_id = {ph} ORDER BY year_index",
+                f"SELECT year_index, vested_amount FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph} ORDER BY year_index",
                 (fid,),
             )
             fd_date = parse_fund_date(str(fd["fund_date"]))
@@ -626,9 +630,9 @@ def api_me_charts():
             conn,
             f"""
             SELECT f.id, f.amount, f.fund_date, f.vesting_cycle, us.username AS sender_name, ur.username AS receiver_name
-            FROM funds f
-            JOIN users us ON us.id = f.sender_id
-            JOIN users ur ON ur.id = f.receiver_id
+            FROM {T_FUNDS} f
+            JOIN {T_USERS} us ON us.id = f.sender_id
+            JOIN {T_USERS} ur ON ur.id = f.receiver_id
             WHERE f.receiver_id = {ph}
             ORDER BY f.id DESC
             """,
@@ -652,7 +656,7 @@ def api_me_charts():
     with get_connection() as conn:
         sch = _run_query(
             conn,
-            f"SELECT year_index, vested_amount FROM vesting_schedule WHERE fund_id = {ph} ORDER BY year_index",
+            f"SELECT year_index, vested_amount FROM {T_VESTING_SCHEDULE} WHERE fund_id = {ph} ORDER BY year_index",
             (fid,),
         )
     fd_date = parse_fund_date(str(target["fund_date"]))
