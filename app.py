@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from database import (
+    _is_postgres,
     build_schedule_rows,
     cumulative_vested_amount,
     current_year_vested_total,
@@ -23,7 +24,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "demo-local-secret-change-in-produ
 
 
 def _ph() -> str:
-    return "%s" if os.environ.get("DATABASE_URL") else "?"
+    return "%s" if _is_postgres() else "?"
 
 
 def _dict_rows(cur, rows) -> List[Dict[str, Any]]:
@@ -269,7 +270,7 @@ def api_funds():
         vr_id = vr["id"] if vr else None
         fd = parse_fund_date(fund_date)
         fd_str = fd.isoformat()
-        if os.environ.get("DATABASE_URL"):
+        if _is_postgres():
             cur = conn.cursor()
             cur.execute(
                 """
@@ -353,7 +354,7 @@ def api_fund_one(fund_id: int):
         vr_id = vr["id"] if vr else None
         fd = parse_fund_date(str(frow["fund_date"]))
         fd_str = fd.isoformat()
-        if os.environ.get("DATABASE_URL"):
+        if _is_postgres():
             _exec(
                 conn,
                 """
@@ -683,7 +684,14 @@ init_db()
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({"ok": True})
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
+        return jsonify({"ok": True})
+    except Exception:
+        return jsonify({"ok": False}), 503
 
 
 if __name__ == "__main__":

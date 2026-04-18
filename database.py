@@ -15,13 +15,29 @@ DEFAULT_RULES_JSON = json.dumps(
 
 
 def _normalize_database_url(url: str) -> str:
+    url = url.strip()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
+    if url.startswith("postgresql+psycopg2://"):
+        url = "postgresql://" + url[len("postgresql+psycopg2://") :]
     return url
 
 
+def _database_url_raw() -> str:
+    return (os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or "").strip()
+
+
 def _is_postgres() -> bool:
-    return bool(os.environ.get("DATABASE_URL"))
+    return bool(_database_url_raw())
+
+
+def _build_postgres_dsn() -> str:
+    url = _normalize_database_url(_database_url_raw())
+    if not url:
+        raise ValueError("DATABASE_URL / POSTGRES_URL 未配置")
+    if "sslmode=" not in url.lower():
+        url = url + ("&" if "?" in url else "?") + "sslmode=require"
+    return url
 
 
 @contextmanager
@@ -29,8 +45,7 @@ def get_connection():
     if _is_postgres():
         import psycopg2
 
-        url = _normalize_database_url(os.environ["DATABASE_URL"])
-        conn = psycopg2.connect(url, sslmode="require")
+        conn = psycopg2.connect(_build_postgres_dsn(), connect_timeout=15)
         try:
             yield conn
             conn.commit()
@@ -42,8 +57,11 @@ def get_connection():
     else:
         import sqlite3
 
-        os.makedirs(os.path.join(os.path.dirname(__file__), "database"), exist_ok=True)
-        path = os.path.join(os.path.dirname(__file__), "database", "local.db")
+        if os.environ.get("VERCEL"):
+            path = "/tmp/trust_local.db"
+        else:
+            os.makedirs(os.path.join(os.path.dirname(__file__), "database"), exist_ok=True)
+            path = os.path.join(os.path.dirname(__file__), "database", "local.db")
         conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
         try:
