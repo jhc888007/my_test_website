@@ -1,297 +1,251 @@
+import json
 import os
-import sqlite3
-from datetime import datetime, timedelta
-from pathlib import Path
+from contextlib import contextmanager
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-from werkzeug.security import generate_password_hash
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "trust_flow.db"
-
-IS_POSTGRES = bool(os.environ.get("DATABASE_URL"))
-
-
-class UnifiedConn:
-    def __init__(self, raw_conn, is_postgres: bool):
-        self._raw = raw_conn
-        self._is_postgres = is_postgres
-
-    def execute(self, sql, params=()):
-        if self._is_postgres:
-            sql = sql.replace("?", "%s")
-            cur = self._raw.cursor()
-            cur.execute(sql, params or ())
-            return cur
-        return self._raw.execute(sql, params or ())
-
-    def commit(self):
-        self._raw.commit()
-
-    def close(self):
-        self._raw.close()
-
-    def executescript(self, script: str):
-        if self._is_postgres:
-            raise RuntimeError("executescript is only for SQLite")
-        self._raw.executescript(script)
+DEFAULT_RULES_JSON = json.dumps(
+    {
+        "3": [1 / 3, 1 / 3, 1 / 3],
+        "5": [0.10, 0.15, 0.20, 0.25, 0.30],
+        "10": [0.10] * 10,
+    },
+    ensure_ascii=False,
+)
 
 
-def get_db():
-    if IS_POSTGRES:
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    return url
+
+
+def _is_postgres() -> bool:
+    return bool(os.environ.get("DATABASE_URL"))
+
+
+@contextmanager
+def get_connection():
+    if _is_postgres():
         import psycopg2
-        from psycopg2.extras import RealDictCursor
 
-        raw = psycopg2.connect(os.environ["DATABASE_URL"], cursor_factory=RealDictCursor)
-        return UnifiedConn(raw, True)
-    raw = sqlite3.connect(DB_PATH)
-    raw.row_factory = sqlite3.Row
-    raw.execute("PRAGMA foreign_keys = ON")
-    return UnifiedConn(raw, False)
+        url = _normalize_database_url(os.environ["DATABASE_URL"])
+        conn = psycopg2.connect(url, sslmode="require")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        import sqlite3
 
-
-def _arithmetic_vesting_rows(total_amount: float, years_n: int, base_dt: datetime):
-    if years_n < 1:
-        return []
-    s = years_n * (years_n + 1) / 2
-    rows = []
-    for i in range(1, years_n + 1):
-        prop = i / s
-        amt = total_amount * i / s
-        unlock_at = base_dt + timedelta(days=365 * (i - 1))
-        rows.append(
-            {
-                "year_index": i,
-                "planned_unlock_at": unlock_at.isoformat(sep=" ", timespec="seconds"),
-                "proportion": prop,
-                "unlock_amount": amt,
-                "status": "待解锁",
-            }
-        )
-    return rows
+        os.makedirs(os.path.join(os.path.dirname(__file__), "database"), exist_ok=True)
+        path = os.path.join(os.path.dirname(__file__), "database", "local.db")
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
-def _init_db_sqlite(conn):
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS funds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trustee_id INTEGER NOT NULL REFERENCES users(id),
-            beneficiary_id INTEGER NOT NULL REFERENCES users(id),
-            total_amount REAL NOT NULL,
-            years_n INTEGER NOT NULL CHECK (years_n >= 1),
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS vesting_schedules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
-            year_index INTEGER NOT NULL,
-            planned_unlock_at TEXT NOT NULL,
-            proportion REAL NOT NULL,
-            unlock_amount REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT '待解锁'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id);
-        CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id);
-        CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id);
-        """
-    )
+def _execute(conn, sql: str, params: Tuple = ()) -> None:
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    cur.close()
 
 
-def _init_db_postgres(conn):
-    stmts = [
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('TRUSTEE', 'BENEFICIARY')),
-            created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS funds (
-            id SERIAL PRIMARY KEY,
-            trustee_id INTEGER NOT NULL REFERENCES users(id),
-            beneficiary_id INTEGER NOT NULL REFERENCES users(id),
-            total_amount DOUBLE PRECISION NOT NULL,
-            years_n INTEGER NOT NULL CHECK (years_n >= 1),
-            created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS vesting_schedules (
-            id SERIAL PRIMARY KEY,
-            fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
-            year_index INTEGER NOT NULL,
-            planned_unlock_at TEXT NOT NULL,
-            proportion DOUBLE PRECISION NOT NULL,
-            unlock_amount DOUBLE PRECISION NOT NULL,
-            status TEXT NOT NULL DEFAULT '待解锁'
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS idx_funds_beneficiary ON funds(beneficiary_id)",
-        "CREATE INDEX IF NOT EXISTS idx_funds_trustee ON funds(trustee_id)",
-        "CREATE INDEX IF NOT EXISTS idx_vesting_fund ON vesting_schedules(fund_id)",
-    ]
-    for s in stmts:
-        conn.execute(s)
-
-
-def init_db():
-    conn = get_db()
-    try:
-        if IS_POSTGRES:
-            _init_db_postgres(conn)
-        else:
-            _init_db_sqlite(conn)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _user_id_by_name(conn, username: str):
-    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
-    return row["id"] if row else None
-
-
-def _fund_exists_for_pair(conn, trustee_id: int, beneficiary_id: int, total: float, years: int):
-    row = conn.execute(
-        """
-        SELECT id FROM funds
-        WHERE trustee_id = ? AND beneficiary_id = ? AND total_amount = ? AND years_n = ?
-        """,
-        (trustee_id, beneficiary_id, total, years),
-    ).fetchone()
-    return row is not None
-
-
-def _insert_fund_id(conn, tid, bid, total, yn, created: str) -> int:
-    if IS_POSTGRES:
-        cur = conn.execute(
-            """
-            INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-            """,
-            (tid, bid, total, yn, created),
-        )
-        row = cur.fetchone()
-        return row["id"]
-    cur = conn.execute(
-        """
-        INSERT INTO funds (trustee_id, beneficiary_id, total_amount, years_n, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (tid, bid, total, yn, created),
-    )
-    return cur.lastrowid
-
-
-def seed_if_needed():
-    conn = get_db()
-    try:
-        now = datetime.utcnow()
-        users_seed = [
-            ("admin", "admin", "TRUSTEE"),
-            ("Alexander", "123", "BENEFICIARY"),
-            ("Isabella", "123", "BENEFICIARY"),
-        ]
-        for uname, pwd, role in users_seed:
-            if conn.execute("SELECT 1 FROM users WHERE username = ?", (uname,)).fetchone():
-                continue
-            conn.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                (uname, generate_password_hash(pwd, method="pbkdf2:sha256"), role),
-            )
-        conn.commit()
-
-        admin_id = _user_id_by_name(conn, "admin")
-        alex_id = _user_id_by_name(conn, "Alexander")
-        isa_id = _user_id_by_name(conn, "Isabella")
-        if not admin_id or not alex_id or not isa_id:
-            return
-
-        seeds = [
-            (admin_id, alex_id, 500_000_000.0, 5),
-            (admin_id, isa_id, 200_000_000.0, 3),
-        ]
-        for tid, bid, total, yn in seeds:
-            if _fund_exists_for_pair(conn, tid, bid, total, yn):
-                continue
-            created = now.isoformat(sep=" ", timespec="seconds")
-            fund_id = _insert_fund_id(conn, tid, bid, total, yn, created)
-            base_dt = now
-            for row in _arithmetic_vesting_rows(total, yn, base_dt):
-                conn.execute(
-                    """
-                    INSERT INTO vesting_schedules
-                    (fund_id, year_index, planned_unlock_at, proportion, unlock_amount, status)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        fund_id,
-                        row["year_index"],
-                        row["planned_unlock_at"],
-                        row["proportion"],
-                        row["unlock_amount"],
-                        row["status"],
-                    ),
-                )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def create_fund_with_vesting(trustee_id: int, beneficiary_id: int, total_amount: float, years_n: int):
-    conn = get_db()
-    try:
-        now = datetime.utcnow()
-        created = now.isoformat(sep=" ", timespec="seconds")
-        fund_id = _insert_fund_id(conn, trustee_id, beneficiary_id, total_amount, years_n, created)
-        base_dt = now
-        for row in _arithmetic_vesting_rows(total_amount, years_n, base_dt):
-            conn.execute(
+def init_db() -> None:
+    with get_connection() as conn:
+        if _is_postgres():
+            _execute(
+                conn,
                 """
-                INSERT INTO vesting_schedules
-                (fund_id, year_index, planned_unlock_at, proportion, unlock_amount, status)
-                VALUES (?, ?, ?, ?, ?, ?)
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(128) UNIQUE NOT NULL,
+                    password VARCHAR(256) NOT NULL,
+                    role CHAR(1) NOT NULL CHECK (role IN ('A', 'B')),
+                    status VARCHAR(32) NOT NULL DEFAULT 'active'
+                )
                 """,
-                (
-                    fund_id,
-                    row["year_index"],
-                    row["planned_unlock_at"],
-                    row["proportion"],
-                    row["unlock_amount"],
-                    row["status"],
-                ),
             )
-        conn.commit()
-        return fund_id
-    finally:
-        conn.close()
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS vesting_rules (
+                    id SERIAL PRIMARY KEY,
+                    rules_json TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS funds (
+                    id SERIAL PRIMARY KEY,
+                    sender_id INTEGER NOT NULL REFERENCES users(id),
+                    receiver_id INTEGER NOT NULL REFERENCES users(id),
+                    amount DOUBLE PRECISION NOT NULL,
+                    fund_date DATE NOT NULL,
+                    vesting_cycle INTEGER NOT NULL,
+                    note TEXT,
+                    vesting_rule_id INTEGER REFERENCES vesting_rules(id)
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS vesting_schedule (
+                    id SERIAL PRIMARY KEY,
+                    fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+                    year_index INTEGER NOT NULL,
+                    vested_amount DOUBLE PRECISION NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'scheduled'
+                )
+                """,
+            )
+        else:
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('A', 'B')),
+                    status TEXT NOT NULL DEFAULT 'active'
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS vesting_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rules_json TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS funds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER NOT NULL REFERENCES users(id),
+                    receiver_id INTEGER NOT NULL REFERENCES users(id),
+                    amount REAL NOT NULL,
+                    fund_date TEXT NOT NULL,
+                    vesting_cycle INTEGER NOT NULL,
+                    note TEXT,
+                    vesting_rule_id INTEGER REFERENCES vesting_rules(id)
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS vesting_schedule (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fund_id INTEGER NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+                    year_index INTEGER NOT NULL,
+                    vested_amount REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'scheduled'
+                )
+                """,
+            )
+
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM vesting_rules")
+        c = cur.fetchone()[0]
+        cur.close()
+        if c == 0:
+            ph = "%s" if _is_postgres() else "?"
+            _execute(conn, f"INSERT INTO vesting_rules (rules_json) VALUES ({ph})", (DEFAULT_RULES_JSON,))
 
 
-def delete_user_cascade(user_id: int) -> bool:
-    conn = get_db()
-    try:
-        conn.execute("DELETE FROM funds WHERE beneficiary_id = ? OR trustee_id = ?", (user_id, user_id))
-        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        conn.commit()
-        return cur.rowcount > 0
-    finally:
-        conn.close()
+def get_rules(conn) -> Dict[str, List[float]]:
+    cur = conn.cursor()
+    cur.execute("SELECT rules_json FROM vesting_rules ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return json.loads(DEFAULT_RULES_JSON)
+    data = json.loads(row[0])
+    out = {}
+    for k, v in data.items():
+        out[str(k)] = [float(x) for x in v]
+    return out
 
 
-def init_app_db():
-    init_db()
-    seed_if_needed()
+def set_rules(conn, rules: Dict[str, List[float]]) -> None:
+    payload = json.dumps({str(k): [float(x) for x in v] for k, v in rules.items()}, ensure_ascii=False)
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM vesting_rules ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    if row:
+        if _is_postgres():
+            cur.execute("UPDATE vesting_rules SET rules_json = %s WHERE id = %s", (payload, row[0]))
+        else:
+            cur.execute("UPDATE vesting_rules SET rules_json = ? WHERE id = ?", (payload, row[0]))
+    else:
+        if _is_postgres():
+            cur.execute("INSERT INTO vesting_rules (rules_json) VALUES (%s)", (payload,))
+        else:
+            cur.execute("INSERT INTO vesting_rules (rules_json) VALUES (?)", (payload,))
+    cur.close()
+
+
+def parse_fund_date(value: str) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    return datetime.strptime(value[:10], "%Y-%m-%d").date()
+
+
+def vesting_calendar_year(grant: date, year_index: int) -> int:
+    return grant.year + year_index - 1
+
+
+def current_year_vested_total(schedule_rows: List[Dict], grant_date: date, today: Optional[date] = None) -> float:
+    t = today or date.today()
+    cy = t.year
+    s = 0.0
+    for r in schedule_rows:
+        yi = int(r["year_index"])
+        vy = vesting_calendar_year(grant_date, yi)
+        if vy == cy:
+            s += float(r["vested_amount"])
+    return s
+
+
+def cumulative_vested_amount(schedule_rows: List[Dict], grant_date: date, today: Optional[date] = None) -> float:
+    t = today or date.today()
+    cy = t.year
+    s = 0.0
+    for r in schedule_rows:
+        yi = int(r["year_index"])
+        vy = vesting_calendar_year(grant_date, yi)
+        if vy <= cy:
+            s += float(r["vested_amount"])
+    return s
+
+
+def build_schedule_rows(amount: float, percentages: List[float]) -> List[Tuple[int, float]]:
+    rows = []
+    for i, p in enumerate(percentages, start=1):
+        rows.append((i, round(amount * float(p), 2)))
+    total = sum(x[1] for x in rows)
+    diff = round(amount - total, 2)
+    if rows and diff != 0:
+        last = list(rows[-1])
+        last = (last[0], round(last[1] + diff, 2))
+        rows[-1] = last
+    return rows

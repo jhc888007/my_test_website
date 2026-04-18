@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A类用户控制台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="has-noise">
+  <div class="topbar-mobile">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">瑞</div>
+      <span class="brand-title" style="font-size:15px">瑞信信托</span>
+    </div>
+    <button type="button" class="menu-toggle" id="btn-menu" aria-label="打开菜单">☰</button>
+  </div>
+  <div class="dash-wrap">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">瑞</div>
+          <h1 class="brand-title">瑞信信托管理系统</h1>
+        </div>
+      </div>
+      <ul class="nav-list">
+        <li><a href="#overview" data-nav>首页概览</a></li>
+        <li><a href="#distribute" data-nav>发放资金</a></li>
+        <li><a href="#records" data-nav>发放记录</a></li>
+        <li><a href="#users" data-nav>用户管理</a></li>
+        <li><a href="#rules" data-nav>归属规则设置</a></li>
+      </ul>
+      <div class="sidebar-foot">
+        <button type="button" class="btn btn-secondary" style="width:100%" id="btn-logout-a">退出登录</button>
+      </div>
+    </aside>
+    <main class="dash-main">
+      <section class="panel is-active" data-panel="overview" id="panel-overview">
+        <h1 class="page-title">首页概览</h1>
+        <div class="grid-cards">
+          <div class="stat-card stagger" style="animation-delay:0s">
+            <h2>累计发放总额</h2>
+            <p class="stat-num" id="stat-total">0</p>
+          </div>
+          <div class="stat-card stagger" style="animation-delay:0.05s">
+            <h2>已发放笔数</h2>
+            <p class="stat-num" id="stat-count">0</p>
+          </div>
+          <div class="stat-card stagger" style="animation-delay:0.1s">
+            <h2>B类用户总数</h2>
+            <p class="stat-num" id="stat-b">0</p>
+          </div>
+          <div class="stat-card stagger" style="animation-delay:0.15s">
+            <h2>当前年度归属总额</h2>
+            <p class="stat-num" id="stat-year-vest">0</p>
+          </div>
+        </div>
+        <div class="card-block">
+          <h2>快捷操作</h2>
+          <a class="btn btn-primary" href="#distribute" data-jump>发放资金</a>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="distribute" id="panel-distribute">
+        <h1 class="page-title">发放资金</h1>
+        <div class="card-block" style="max-width:560px">
+          <form id="form-fund" class="form-stack">
+            <div class="field">
+              <label for="receiver_id">选择受益人</label>
+              <select class="input" id="receiver_id" required></select>
+            </div>
+            <div class="field">
+              <label for="amount">发放金额</label>
+              <input class="input" id="amount" type="number" step="0.01" min="0" required>
+            </div>
+            <div class="field">
+              <label for="fund_date">发放日期</label>
+              <input class="input" id="fund_date" type="date" required>
+            </div>
+            <div class="field">
+              <label for="vesting_cycle">归属周期</label>
+              <select class="input" id="vesting_cycle">
+                <option value="3">3年</option>
+                <option value="5" selected>5年</option>
+                <option value="10">10年</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="note">备注（可选）</label>
+              <input class="input" id="note" type="text" placeholder="备注">
+            </div>
+            <p id="fund-msg" class="msg-error"></p>
+            <button type="submit" class="btn btn-primary">确认发放</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="records" id="panel-records">
+        <h1 class="page-title">发放记录</h1>
+        <div class="card-block">
+          <div id="records-empty" class="empty-state" style="display:none">暂无发放记录</div>
+          <div class="table-wrap">
+            <table class="data-table" id="table-records">
+              <thead>
+                <tr>
+                  <th>受益人</th>
+                  <th>金额</th>
+                  <th>发放日期</th>
+                  <th>归属周期</th>
+                  <th>备注</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="users" id="panel-users">
+        <h1 class="page-title">用户管理</h1>
+        <div class="card-block">
+          <div id="users-empty" class="empty-state" style="display:none">暂无B类用户</div>
+          <div class="table-wrap">
+            <table class="data-table" id="table-users">
+              <thead>
+                <tr>
+                  <th>用户名</th>
+                  <th>总金额</th>
+                  <th>已归属金额</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="rules" id="panel-rules">
+        <h1 class="page-title">归属规则设置</h1>
+        <div class="card-block">
+          <p class="serif-note" style="margin-top:0">当前默认归属规则可按周期分别配置，各年比例之和应为 100%。默认 5 年递增：第1年10%，第2年15%，第3年20%，第4年25%，第5年30%。</p>
+          <form id="form-rules" class="rules-grid" style="margin-top:16px"></form>
+          <p id="rules-msg" class="msg-error" style="margin-top:12px"></p>
+          <button type="button" class="btn btn-primary" id="btn-save-rules" style="margin-top:12px">保存规则</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal-edit" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-hd"><h3>编辑发放记录</h3></div>
+      <div class="modal-bd">
+        <form id="form-edit-fund" class="form-stack">
+          <input type="hidden" id="edit_id">
+          <div class="field">
+            <label for="edit_amount">金额</label>
+            <input class="input" id="edit_amount" type="number" step="0.01" min="0" required>
+          </div>
+          <div class="field">
+            <label for="edit_cycle">归属周期</label>
+            <select class="input" id="edit_cycle">
+              <option value="3">3年</option>
+              <option value="5">5年</option>
+              <option value="10">10年</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="edit_note">备注</label>
+            <input class="input" id="edit_note" type="text">
+          </div>
+          <p id="edit-msg" class="msg-error"></p>
+        </form>
+      </div>
+      <div class="modal-ft">
+        <button type="button" class="btn btn-ghost" id="btn-edit-cancel">取消</button>
+        <button type="button" class="btn btn-primary" id="btn-edit-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-del" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-hd"><h3>确认删除</h3></div>
+      <div class="modal-bd">
+        <p style="margin:0;color:var(--text-secondary)">确认删除该记录？</p>
+        <input type="hidden" id="del_id">
+      </div>
+      <div class="modal-ft">
+        <button type="button" class="btn btn-ghost" id="btn-del-cancel">取消</button>
+        <button type="button" class="btn btn-danger" id="btn-del-ok">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      window.TM.initDashboardA();
+    });
+  </script>
+</body>
+</html>

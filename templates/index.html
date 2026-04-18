@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>瑞信信托管理系统</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="has-noise">
+  <div class="landing">
+    <header class="landing-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">瑞</div>
+        <h1 class="brand-title">瑞信信托管理系统</h1>
+      </div>
+    </header>
+    <main class="landing-main">
+      <p class="hero-tagline">专业信托资金管理，让财富传承更透明</p>
+      <p class="hero-sub">信托资金管理演示系统，支持资金发放、归属进度与记录查询。</p>
+      <div class="landing-actions">
+        <a class="btn btn-primary" href="{{ url_for('login_page') }}">登录</a>
+        <a class="btn btn-secondary" href="{{ url_for('register_page') }}">注册</a>
+      </div>
+    </main>
+    <footer class="landing-footer">演示环境 · 数据仅供展示</footer>
+  </div>
+</body>
+</html>

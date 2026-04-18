@@ -1,34 +1,46 @@
-{% extends "base.html" %}
-{% block title %}注册 — Trust-Flow{% endblock %}
-{% block body %}
-<div class="min-h-screen flex items-center justify-center p-6">
-  <div class="glass w-full max-w-md p-10 anim-fade-in-up anim-delay" style="animation-delay:0.05s">
-    <h1 class="text-2xl font-bold text-gold text-center mb-2">创建账户</h1>
-    <p class="text-center text-body/80 text-sm mb-8">选择身份，开启传承之旅</p>
-    {% if error %}
-    <div class="mb-4 text-sm text-red-400 text-center">{{ error }}</div>
-    {% endif %}
-    <form method="post" action="{{ url_for('register') }}" class="space-y-5">
-      <div>
-        <label class="block text-xs text-body/70 mb-1">用户名</label>
-        <input name="username" required autocomplete="username" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
-      </div>
-      <div>
-        <label class="block text-xs text-body/70 mb-1">密码</label>
-        <input name="password" type="password" required autocomplete="new-password" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
-      </div>
-      <div>
-        <label class="block text-xs text-body/70 mb-1">身份</label>
-        <select name="role" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
-          <option value="TRUSTEE">Trustee 资金管理人</option>
-          <option value="BENEFICIARY" selected>Beneficiary 信托受益人</option>
-        </select>
-      </div>
-      <button type="submit" class="w-full py-3 rounded-xl font-bold text-black bg-[#D4AF37] hover:brightness-110 shadow-lg shadow-black/40 transition">注册</button>
-    </form>
-    <p class="text-center text-sm mt-6 text-body/60">
-      已有账号？<a href="{{ url_for('login') }}" class="text-gold font-semibold hover:underline">登录</a>
-    </p>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>注册</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="has-noise">
+  <div class="auth-page">
+    <div class="auth-card">
+      <h1>注册账号</h1>
+      <p class="auth-hint">请选择角色并完成注册</p>
+      <form id="form-register" class="form-stack">
+        <div class="field">
+          <label for="username">用户名</label>
+          <input class="input" id="username" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input class="input" id="password" name="password" type="password" autocomplete="new-password" required>
+        </div>
+        <div class="field">
+          <label for="role">角色</label>
+          <select class="input" id="role" name="role" required>
+            <option value="A">A类用户（信托发放方）</option>
+            <option value="B">B类用户（受益人）</option>
+          </select>
+        </div>
+        <p id="reg-msg" class="msg-error" role="alert"></p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" style="width:100%">立即注册</button>
+          <a class="link-muted" href="{{ url_for('login_page') }}">已有账号？去登录</a>
+        </div>
+      </form>
+      <p class="hint-foot">演示系统，任意用户名均可注册</p>
+    </div>
   </div>
-</div>
-{% endblock %}
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      window.TM.initRegister();
+    });
+  </script>
+</body>
+</html>

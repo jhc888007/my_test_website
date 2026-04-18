@@ -1,28 +1,38 @@
-{% extends "base.html" %}
-{% block title %}登录 — Trust-Flow{% endblock %}
-{% block body %}
-<div class="min-h-screen flex items-center justify-center p-6">
-  <div class="glass w-full max-w-md p-10 anim-fade-in-up">
-    <h1 class="text-2xl font-bold text-gold text-center mb-2">Trust-Flow</h1>
-    <p class="text-center text-body/80 text-sm mb-8">财富引擎 · 安全登录</p>
-    {% if error %}
-    <div class="mb-4 text-sm text-red-400 text-center">{{ error }}</div>
-    {% endif %}
-    <form method="post" action="{{ url_for('login') }}" class="space-y-5">
-      <input type="hidden" name="next" value="{{ request.args.get('next','') }}">
-      <div>
-        <label class="block text-xs text-body/70 mb-1">用户名</label>
-        <input name="username" required autocomplete="username" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
-      </div>
-      <div>
-        <label class="block text-xs text-body/70 mb-1">密码</label>
-        <input name="password" type="password" required autocomplete="current-password" class="w-full rounded-xl bg-black/25 border border-gold-soft px-4 py-3 text-body focus:outline-none focus:ring-1 focus:ring-[#D4AF37]/50">
-      </div>
-      <button type="submit" class="w-full py-3 rounded-xl font-bold text-black bg-[#D4AF37] hover:brightness-110 shadow-lg shadow-black/40 transition">登录</button>
-    </form>
-    <p class="text-center text-sm mt-6 text-body/60">
-      尚无账号？<a href="{{ url_for('register') }}" class="text-gold font-semibold hover:underline">注册</a>
-    </p>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="has-noise">
+  <div class="auth-page">
+    <div class="auth-card">
+      <h1>登录</h1>
+      <p class="auth-hint">请输入用户名与密码</p>
+      <form id="form-login" class="form-stack">
+        <div class="field">
+          <label for="username">用户名</label>
+          <input class="input" id="username" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input class="input" id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="login-msg" class="msg-error" role="alert"></p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
+          <a class="link-muted" href="{{ url_for('register_page') }}">没有账号？去注册</a>
+        </div>
+      </form>
+    </div>
   </div>
-</div>
-{% endblock %}
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      window.TM.initLogin();
+    });
+  </script>
+</body>
+</html>

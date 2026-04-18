@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B类用户控制台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="has-noise">
+  <div class="topbar-mobile">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">瑞</div>
+      <span class="brand-title" style="font-size:15px">瑞信信托</span>
+    </div>
+    <button type="button" class="menu-toggle" id="btn-menu-b" aria-label="打开菜单">☰</button>
+  </div>
+  <div class="dash-wrap">
+    <aside class="sidebar" id="sidebar-b">
+      <div class="sidebar-brand">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">瑞</div>
+          <h1 class="brand-title">瑞信信托管理系统</h1>
+        </div>
+      </div>
+      <ul class="nav-list">
+        <li><a href="#funds" data-nav-b>我的资金</a></li>
+        <li><a href="#records" data-nav-b>发放记录</a></li>
+        <li><a href="#vesting" data-nav-b>归属详情</a></li>
+        <li><a href="#charts" data-nav-b>信托图表</a></li>
+        <li><a href="#rules" data-nav-b>规则说明</a></li>
+      </ul>
+      <div class="sidebar-foot">
+        <button type="button" class="btn btn-secondary" style="width:100%" id="btn-logout-b">退出登录</button>
+      </div>
+    </aside>
+    <main class="dash-main">
+      <section class="panel is-active" data-panel-b="funds" id="b-panel-funds">
+        <h1 class="page-title">我的资金</h1>
+        <div class="grid-cards">
+          <div class="stat-card">
+            <h2>总金额</h2>
+            <p class="stat-num" id="b-total">0</p>
+          </div>
+          <div class="stat-card">
+            <h2>已归属金额</h2>
+            <p class="stat-num" id="b-vested">0</p>
+          </div>
+          <div class="stat-card">
+            <h2>未归属金额</h2>
+            <p class="stat-num" id="b-unvested">0</p>
+          </div>
+          <div class="stat-card">
+            <h2>当年可归属金额</h2>
+            <p class="stat-num" id="b-year">0</p>
+          </div>
+        </div>
+        <div class="card-block">
+          <h2>已归属金额占比</h2>
+          <div class="progress-wrap">
+            <div class="progress-label">
+              <span>已归属金额占比</span>
+              <span id="b-pct-label">0%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" id="b-progress"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel-b="records" id="b-panel-records">
+        <h1 class="page-title">发放记录</h1>
+        <div class="card-block">
+          <div id="b-rec-empty" class="empty-state" style="display:none">暂无发放记录</div>
+          <div class="table-wrap">
+            <table class="data-table" id="b-table-rec">
+              <thead>
+                <tr>
+                  <th>发放方</th>
+                  <th>金额</th>
+                  <th>发放日期</th>
+                  <th>归属周期</th>
+                  <th>备注</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel-b="vesting" id="b-panel-vesting">
+        <h1 class="page-title">归属详情</h1>
+        <div class="card-block" id="b-vesting-wrap">
+          <div id="b-vest-empty" class="empty-state" style="display:none">暂无发放记录</div>
+          <div id="b-vesting-acc"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel-b="charts" id="b-panel-charts">
+        <h1 class="page-title">信托图表</h1>
+        <div class="card-block">
+          <div class="field" style="max-width:360px">
+            <label for="chart-fund-select">选择资金记录</label>
+            <select class="input" id="chart-fund-select"></select>
+          </div>
+          <div class="chart-tabs">
+            <button type="button" class="btn btn-sm btn-secondary" data-chart-tab="timeline">归属时间轴</button>
+            <button type="button" class="btn btn-sm btn-secondary" data-chart-tab="flow">传承关系</button>
+            <button type="button" class="btn btn-sm btn-secondary" data-chart-tab="family">家族树状</button>
+          </div>
+          <div class="chart-box" id="chart-host"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel-b="rules" id="b-panel-rules">
+        <h1 class="page-title">信托归属规则说明</h1>
+        <div class="card-block">
+          <div class="serif-note">
+            <p><strong>什么是递增式归属</strong>：信托资金按年度分批归属至受益人，前期比例较低、后期比例递增，体现长期激励与传承节奏。</p>
+            <p><strong>归属周期含义</strong>：可选择 3 年、5 年或 10 年周期，周期内各年比例之和为 100%。</p>
+            <p><strong>各年归属比例示例（5年）</strong>：第1年10%，第2年15%，第3年20%，第4年25%，第5年30%。</p>
+          </div>
+          <div id="rule-curve-host" style="margin-top:20px"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="{{ url_for('static', filename='js/charts.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      window.TM.initDashboardB();
+    });
+  </script>
+</body>
+</html>
